@@ -1,0 +1,9 @@
+Package: ks-munin-node-plugins
+Version: ::VERSION::
+Section: free
+Priority: optional
+Architecture: all
+Installed-Size: 0
+Maintainer: Kael Shipman <kael.shipman@gmail.com>
+Description: A random assortment of useful munin-node plugins that I've either created or modified
+
