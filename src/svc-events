@@ -6,43 +6,94 @@ set -e
 
 =head1 DESCRIPTION
 
-svc-events - Counts the number of alarming events per configured service
+svc-events - Tracks the number of significant event occurrences per service
+
+This plugin is a riff on the loggrep family (\`loggrep\` and my own \`loggrepx_\`).
+However, rather than focusing on single log files, it focuses on providing
+insight into all "significant events" happening for a given service, which
+may be found across several log files.
+
+The idea is that any given service may produce events in various areas of
+operation. For example, while a typical web app might log runtime errors
+to it's app.log file, a filesystem change may prevent the whole app from
+event being bootstrapped, which may be logged in an apache log or in syslog.
+
+This plugin attempts to answer the question, "how is my service doing?".
+Unfortunately, it won't help you trace down exactly where the events are
+coming from if you happen to be watching a number of different logs, but
+it will at least let you know that something is wrong and that action
+should be taken.
+
+The plugin can be included multiple times to create graphs for various
+differing kinds of services. For example, you may have both webservices
+and system cleanup services, and you want to keep an eye on them in
+different ways.
+
+You can accomplish this by linking the plugin twice with different names
+and providing different configuration for each instance.
 
 =head1 CONFIGURATION
 
-The plugin can be included multiple times to create graphs for various
-differing kinds of information in your log files. For example, you may
-want to monitor the occurrence of 5xx errors in your webserver logs, but
-also the occurrence of alert|critical|emergency entries in your syslog.
+Configuration for this plugin is admittedly complicated. What we're doing
+here is defining groups of logfiles that we're searching for various
+kinds of events. It is assumed that the _way_ we search for events in the
+logfiles is related to the type of logfile; thus, we associate match
+criteria with logfile groups. Then, we define services that we want to
+track, then mappings of logfile paths to those services.
 
-You can accomplish this by linking the plugin twice and providing
-different criteria for each instance.
-
-Note that most instances will probably work best when run as root, since
+(Note that most instances will probably work best when run as root, since
 log files are usually (or at least should be) controlled with strict
-permissions.
+permissions.)
 
 Available config options include the following:
 
- env.logfiles         - Files to grep (shellglob) (required)
- env.regex            - Regex to look for (required)
- env.title            - Graph title
- env.warning          - Default warning level
- env.critical         - Default critical level
- env.[field]_label    - Label to use for a specific logfile
- env.[field]_warning  - Warning level for specific logfile
- env.[field]_critical - Critical level for specific logfile
+ Plugin-specific:
 
-NOTE: for any variable with [field] in it, [field] is derived from the
-full logfile path by simply replacing all non-alphanumerics with
-underscores. For example, the "warning" field for the logfile
-\`/var/log/nginx/errors.log\` would be \`var_log_nginx_errors_log_warning\`
+ env.<type>_logfiles      - (reqd) Shell glob pattern defining logfiles of
+                            type <type>
+ env.<type>_regex         - (reqd) egrep pattern for finding events in logs
+                            of type <type>
+ env.services             - (optl) Space-separated list of service names
+ env.services_autoconf    - (optl) Shell glob pattern that expands to paths
+                            whose final member is the name of a service
+ env.<service>_logbinding - (optl) egrep pattern for binding <service> to
+                            a given set of logfiles (based on path)
+ env.<service>_warning    - (optl) service-specific warning level override
+ env.<service>_critical   - (optl) service-specific critical level override
 
-One good way to get these names is to run \`munin-run [plugin-name]\`
-after you've configured the required variables and then just copy/pasting
-the names from the output.
+ Munin-standard:
 
-Example configuration:
+ env.title                - Graph title
+ env.vlabel               - Custom label for the vertical axis
+ env.warning              - Default warning level
+ env.critical             - Default critical level
+
+For plugin-specific options, the following rules apply:
+
+* <type> is any arbitrary string. It just has to match between <type>_logfiles
+  and <type>_regex. Common values are "apache", "nginx", "apt", "syslog", etc.
+* <service> is a string derived by passing the service name through a filter
+  that removes non-alphabet characters from the beginning and replaces all non-
+  alpha-numeric characters with underscore (\`_\`).
+* logfiles are bound to services by matching <service>_logbinding on the full
+  logfile path. For example, specifying my_site_logbinding=my-site would bind
+  both /var/log/my-site/errors.log and /srv/www/my-site/logs/app.log to the
+  defined my-site service.
+
+=head2 SERVICE AUTOCONF
+
+Because services are often dynamic and you don't want to have to manually update
+config every time you deploy a new service, you have the option of defining a
+glob pattern that resolves to a collection of paths whose endpoints are service
+names. Because of the way services are deployed in real life, it's fairly common
+that paths will exist on your system that can accommodate this. Most often it
+will be something like /srv/*/*, which would match all children in /srv/www/ and
+/srv/local/.
+
+If you choose not to use the autoconf feature, you MUST specify services as a
+space-separated list of service names in the \`services\` variable.
+
+=head2 EXAMPLE CONFIG
 
 	[svc-events]
 	user root
@@ -58,11 +109,14 @@ Example configuration:
 	env.my_special_service_warning 100 
 	env.my_special_service_critical 300
 
+
 =head1 AUTHOR
 
 Kael Shipman <kael.shipman@gmail.com>
 
 =head1 LICENSE
+
+MIT LICENSE
 
 Copyright 2018 Kael Shipman<kael.shipman@gmail.com>
 
@@ -173,21 +227,15 @@ if [ -n "$services_autoconf" ]; then
     for s in $services_autoconf; do
         s="$(basename "$s")"
         services+=("$s")
-
-        nm="$(echo "$s" | sed -r 's/^[^a-zA-Z]+//g' | sed -r 's/[^a-zA-Z0-9]+/_/g')"
-        v="${nm}_logbinding"
-        if [ -z "${!v}" ]; then
-            typeset "$v=$s"
-        fi
     done
     unset IFS
 else
     services=($services)
 fi
 
-    
+
 # Import munin functions
-#. "$MUNIN_LIBDIR/plugins/plugin.sh"
+. "$MUNIN_LIBDIR/plugins/plugin.sh"
 
 
 # Now get to the real function definitions
@@ -202,8 +250,8 @@ function config() {
     while read -u 3 -r svc; do
         nm="$(echo "$svc" | sed -r 's/^[^a-zA-Z]+//g' | sed -r 's/[^a-zA-Z0-9]+/_/g')"
         echo "$nm.label $svc"
-        #print_warning "$nm"
-        #print_critical "$nm"
+        print_warning "$nm"
+        print_critical "$nm"
         echo "$nm.info Number of event occurrences for $svc"
     done 3< <(IFS=$'\n'; echo "${services[*]}")
 }
@@ -218,10 +266,15 @@ function fetch() {
 
     local n svcnm service svc svc_counter logbinding logfile lognm logmatch prvlines curlines matches
 
-    # Set service counters to 0
+    # Set service counters to 0 and set any logbindings that aren't yet set
     while read -u 3 -r svc; do
         svcnm="$(echo "$svc" | sed -r 's/^[^a-zA-Z]+//g' | sed -r 's/[^a-zA-Z0-9]+/_/g')"
         typeset "${svcnm}_total=0"
+
+        v="${svcnm}_logbinding"
+        if [ -z "${!v}" ]; then
+            typeset "$v=$svc"
+        fi
     done 3< <(IFS=$'\n'; echo "${services[*]}")
 
     n=0
