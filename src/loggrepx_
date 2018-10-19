@@ -110,6 +110,7 @@ function config() {
 
 function fetch() {
     # Load state
+    touch "$MUNIN_STATEFILE"
     . "$MUNIN_STATEFILE"
 
     local nm logfile prvmatches prvlines curlines matches dif
