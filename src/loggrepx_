@@ -113,7 +113,7 @@ function fetch() {
     touch "$MUNIN_STATEFILE"
     . "$MUNIN_STATEFILE"
 
-    local nm logfile prvmatches prvlines curlines matches dif
+    local nm logfile prvlines curlines matches
     while read -u 3 -r logfile; do
         nm="$(echo "$logfile" | sed -r 's/^[^a-zA-Z]+//g' | sed -r 's/[^a-zA-Z0-9]+/_/g')"
 
@@ -124,28 +124,27 @@ function fetch() {
         fi
 
         # Get the current number of lines in the file
-        curlines="$(wc -l "$logfile")"
+        curlines="$(wc -l "$logfile" | egrep -o '^[0-9]+')"
         if ! [ "$curlines" -eq "$curlines" ] &>/dev/null; then
             curlines=0
         fi
 
-        # Get running aggregate of incidents, setting to 0 if the file appears to have been
-        # rotated
-        prvmatches="$(eval "echo \$${nm}_matches")"
-        if [ -z "$prvmatches" ] || [ "$curlines" -lt "$prvlines" ]; then
-            prvmatches=0
+        # If the current line count is less than the previous line count, we've probably rotated.
+        # Reset to 0.
+        if [ "$curlines" -lt "$prvlines" ]; then
+            prvlines=0
+        else
+            prvlines=$((prvlines + 1))
         fi
 
-        # Get current total number of incidents and do the math
-        matches="$(egrep -c "${regex}" "$logfile")"
-        dif="$(expr $matches - $prvmatches)"
+        # Get current number of incidents
+        matches="$(tail -n +"$prvlines" "$logfile" | egrep -c "${regex}" || true)"
 
         # Echo the value
-        echo "$nm.value $dif"
+        echo "$nm.value $matches"
 
         # Update the statefile
         sed -i "/^$nm.*/d" "$MUNIN_STATEFILE"
-        echo "${nm}_matches=$matches" >> "$MUNIN_STATEFILE"
         echo "${nm}_lines=$curlines" >> "$MUNIN_STATEFILE"
     done 3< <(echo "$LOGFILES")
     return 0

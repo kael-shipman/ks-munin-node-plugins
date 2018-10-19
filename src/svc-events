@@ -206,7 +206,7 @@ function fetch() {
     touch "$MUNIN_STATEFILE"
     . "$MUNIN_STATEFILE"
 
-    local n svcnm service svc svc_counter logbinding logfile lognm logmatch prvmatches prvlines curlines matches dif
+    local n svcnm service svc svc_counter logbinding logfile lognm logmatch prvlines curlines matches
 
     # Set service counters to 0
     while read -u 3 -r svc; do
@@ -248,31 +248,30 @@ function fetch() {
         fi
 
         # Get the current number of lines in the file
-        curlines="$(wc -l "$logfile")"
+        curlines="$(wc -l "$logfile" | egrep -o '^[0-9]+')"
         if ! [ "$curlines" -eq "$curlines" ] &>/dev/null; then
             curlines=0
         fi
 
-        # Get running aggregate of incidents, setting to 0 if the file appears to have been
-        # rotated
-        prvmatches="$(eval "echo \$${lognm}_matches")"
-        if [ -z "$prvmatches" ] || [ "$curlines" -lt "$prvlines" ]; then
-            prvmatches=0
+        # If the current line count is less than the previous line count, we've probably rotated.
+        # Reset to 0.
+        if [ "$curlines" -lt "$prvlines" ]; then
+            prvlines=0
+        else
+            prvlines=$((prvlines + 1))
         fi
 
-        # Get current total number of incidents and do the math
+        # Get incidents starting at the line after the last line we've seen
         logmatch="${LOGFILEMAP[$n]}_regex"
-        matches="$(egrep -c "${!logmatch}" "$logfile" || true)"
-        dif="$(( $matches - $prvmatches))"
+        matches="$(tail -n +"$prvlines" "$logfile" | egrep -c "${!logmatch}" || true)"
 
         # Aggregate and add to the correct service counter
         svc_counter="${svcnm}_total"
-        !((dif+=${!svc_counter}))
-        typeset "$svc_counter=$dif"
+        !((matches+=${!svc_counter}))
+        typeset "$svc_counter=$matches"
 
         # Update the statefile
         sed -i "/^${lognm}_.*/d" "$MUNIN_STATEFILE"
-        echo "${lognm}_matches=$matches" >> "$MUNIN_STATEFILE"
         echo "${lognm}_lines=$curlines" >> "$MUNIN_STATEFILE"
         !((n++))
     done 3< <(echo "$LOGFILES")
