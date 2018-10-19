@@ -91,7 +91,7 @@ function config() {
     echo "graph_title ${title}"
     echo "graph_args --base 1000 -l 0"
     echo "graph_vlabel ${title}"
-    echo "graph_category events"
+    echo "graph_category logevents"
     echo "graph_info Lists number of times the given regex is matched in the given log files per period"
 
     local nm logfile lbl

@@ -6,7 +6,7 @@ set -e
 
 =head1 DESCRIPTION
 
-svc-events - Tracks the number of significant event occurrences per service
+service_events - Tracks the number of significant event occurrences per service
 
 This plugin is a riff on the loggrep family (\`loggrep\` and my own \`loggrepx_\`).
 However, rather than focusing on single log files, it focuses on providing
@@ -95,7 +95,7 @@ space-separated list of service names in the \`services\` variable.
 
 =head2 EXAMPLE CONFIG
 
-	[svc-events]
+	[service_events]
 	user root
 	env.services_autoconf /srv/*/*
 	env.cfxsvc_logfiles /srv/*/*/logs/app.log
@@ -244,7 +244,7 @@ function config() {
     echo "graph_title ${title}"
     echo "graph_args --base 1000 -l 0"
     echo "graph_vlabel ${vlabel}"
-    echo "graph_category events"
+    echo "graph_category logevents"
     echo "graph_info Lists number of matching lines found in various logfiles associated with each service"
 
     while read -u 3 -r svc; do
