@@ -4,15 +4,9 @@ set -e
 
 : << =cut
 
-=head1 NAME
-
-loggrepx - Counts the number of matching log lines by log file
-
 =head1 DESCRIPTION
 
-This plugin is somewhat of a bash port of the original loggrep plugin,
-except that it adds a breakdown of matches per file, rather than aggregating
-matches across all files.
+svc-events - Counts the number of alarming events per configured service
 
 =head1 CONFIGURATION
 
@@ -47,6 +41,22 @@ underscores. For example, the "warning" field for the logfile
 One good way to get these names is to run \`munin-run [plugin-name]\`
 after you've configured the required variables and then just copy/pasting
 the names from the output.
+
+Example configuration:
+
+	[svc-events]
+	user root
+	env.services_autoconf /srv/*/*
+	env.cfxsvc_logfiles /srv/*/*/logs/app.log
+	env.cfxsvc_regex error|alert|crit|emerg
+	env.phpfpm_logfiles /srv/*/*/logs/php-fpm*.log
+	env.phpfpm_regex Fatal error
+	env.apache_logfiles /srv/*/*/logs/errors.log
+	env.apache_regex error|alert|crit|emerg
+	env.warning 1
+	env.critical 5
+	env.my_special_service_warning 100 
+	env.my_special_service_critical 300
 
 =head1 AUTHOR
 
