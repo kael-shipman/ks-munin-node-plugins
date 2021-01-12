@@ -6,7 +6,8 @@ set -e
 
 =head1 DESCRIPTION
 
-service_events - Tracks the number of significant event occurrences per service
+service_events - Tracks the number of significant event occurrences in logfiles
+per service
 
 This plugin is a riff on the loggrep family (\`loggrep\` and my own \`loggrepx_\`).
 However, rather than focusing on single log files, it focuses on providing
@@ -25,9 +26,9 @@ it will at least let you know that something is wrong and that action
 should be taken.
 
 The plugin can be included multiple times to create graphs for various
-differing kinds of services. For example, you may have both webservices
-and system cleanup services, and you want to keep an eye on them in
-different ways.
+differing kinds of information in your log files. For example, you may
+want to monitor the occurrence of 5xx errors in your webserver logs, but
+also the occurrence of alert|critical|emergency entries in your syslog.
 
 You can accomplish this by linking the plugin twice with different names
 and providing different configuration for each instance.
@@ -50,14 +51,18 @@ Available config options include the following:
  Plugin-specific:
 
  env.<type>_logfiles      - (reqd) Shell glob pattern defining logfiles of
-                            type <type>
+													  type <type> (see below for explanation)
  env.<type>_regex         - (reqd) egrep pattern for finding events in logs
-                            of type <type>
+													  of type <type>
  env.services             - (optl) Space-separated list of service names
  env.services_autoconf    - (optl) Shell glob pattern that expands to paths
-                            whose final member is the name of a service
+													  whose final member is the name of a service
  env.<service>_logbinding - (optl) egrep pattern for binding <service> to
-                            a given set of logfiles (based on path)
+													  a given set of logfiles (based on path)
+ env.<service>_exclude    - (optl) Egrep pattern to specifically exclude
+													  matching lines for files of the given service
+ env.<logfile>_exclude    - (optl) Egrep pattern to specifically exclude
+													  matching lines for the specific logfile
  env.<service>_warning    - (optl) service-specific warning level override
  env.<service>_critical   - (optl) service-specific critical level override
 
@@ -71,14 +76,17 @@ Available config options include the following:
 For plugin-specific options, the following rules apply:
 
 * <type> is any arbitrary string. It just has to match between <type>_logfiles
-  and <type>_regex. Common values are "apache", "nginx", "apt", "syslog", etc.
+	and <type>_regex. Common values are "apache", "nginx", "apt", "syslog", etc.
 * <service> is a string derived by passing the service name through a filter
-  that removes non-alphabet characters from the beginning and replaces all non-
-  alpha-numeric characters with underscore (\`_\`).
+	that removes non-alphabet characters from the beginning and replaces all non-
+	alpha-numeric characters with underscore (\`_\`).
+* <logfile> is the full path of a logfile with non-alpha characters removed
+	from the beginning and all non-alpha-numeric characters replaced with
+	underscore (\`_\`).
 * logfiles are bound to services by matching <service>_logbinding on the full
-  logfile path. For example, specifying my_site_logbinding=my-site would bind
-  both /var/log/my-site/errors.log and /srv/www/my-site/logs/app.log to the
-  defined my-site service.
+	logfile path. For example, specifying my_site_logbinding=my-site would bind
+	both /var/log/my-site/errors.log and /srv/www/my-site/logs/app.log to the
+	defined my-site service.
 
 =head2 SERVICE AUTOCONF
 
@@ -90,6 +98,29 @@ that paths will exist on your system that can accommodate this. Most often it
 will be something like /srv/*/*, which would match all children in /srv/www/ and
 /srv/local/.
 
+Consider the following directory tree:
+
+	/srv
+	├── local
+	│   ├── alerts-service
+	│   ├── compliance-service
+	│   ├── exchange-service
+	│   ├── registry-service
+	└── www
+			├── app.mysite.com
+			└── exchange.mysite.com
+
+Using an autoconf value of /srv/*/*, a catch-all mysystem_logfiles value of
+/srv/*/*/logs/app.log, and a generic mysystem_regex value of 'error' would
+cause the system to associate all logfiles found under each service folder with
+the given service and to alert on all lines where the string 'error' is found.
+Each alert would appear under the section for the given service.
+
+You could additionally exclude lines with "[notice]" in the alerts-service by
+adding the config variable \`srv_local_alerts_service_logs_app_log_exclude=\\[notice\\]\`.
+Or you could exclude "[notice]" from _all_ log alerts by setting the config value
+\`mysystem_exclude=\\[notice\\]\`.
+
 If you choose not to use the autoconf feature, you MUST specify services as a
 space-separated list of service names in the \`services\` variable.
 
@@ -97,18 +128,30 @@ space-separated list of service names in the \`services\` variable.
 
 	[service_events]
 	user root
+
 	env.services_autoconf /srv/*/*
 	env.cfxsvc_logfiles /srv/*/*/logs/app.log
 	env.cfxsvc_regex error|alert|crit|emerg
+	env.cfxsvc_exclude \\[debug|info|notice|warning\\]
+
+	env.service phpfpm apache
 	env.phpfpm_logfiles /srv/*/*/logs/php-fpm*.log
 	env.phpfpm_regex Fatal error
+	env.phpfpm_logbinding php-fpm
 	env.apache_logfiles /srv/*/*/logs/errors.log
 	env.apache_regex error|alert|crit|emerg
+	env.apache_logbinding errors\.log
+
 	env.warning 1
 	env.critical 5
 	env.my_special_service_warning 100 
 	env.my_special_service_critical 300
 
+In the above config, we autoconfigure all services under /srv/*/*, search all
+logfiles matching /srv/*/*/logs/app.log, associating each logfile with its
+respective service, match lines with error, alert, crit, or emerg, but exclude
+lines with [debug], [info], [notice], or [warning]. We additionally watch other
+files for phpfpm and apache errors.
 
 =head1 AUTHOR
 
@@ -326,7 +369,14 @@ function fetch() {
 
         # Get incidents starting at the line after the last line we've seen
         logmatch="${LOGFILEMAP[$n]}_regex"
-        matches="$(tail -n +"$prvlines" "$logfile" | egrep -c "${!logmatch}" || true)"
+        logmatch="${!logmatch:-.*}"
+        svcexclude="${LOGFILEMAP[$n]}_exclude"
+        svcexclude="${!svcexclude:-a^$}"
+        fileexclude="${lognm}_exclude"
+        fileexclude="${!fileexclude:-a^$}"
+        matches="$(tail -n +"$prvlines" "$logfile" | grep -E "$logmatch" | grep -Ev "$svcexclude" | grep -Evc "$fileexclude" || true)"
+
+
 
         # Aggregate and add to the correct service counter
         svc_counter="${svcnm}_total"
